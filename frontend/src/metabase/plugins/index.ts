@@ -136,7 +136,7 @@ export const PLUGIN_FEATURE_LEVEL_PERMISSIONS = {
   ) => {
     return [] as any;
   },
-  dataColumns: [] as any,
+  getDataColumns: (_subject: PermissionSubject) => [] as any,
   getDownloadWidgetMessageOverride: (_result: Dataset): string | null => null,
   canDownloadResults: (_result: Dataset): boolean => true,
 };
