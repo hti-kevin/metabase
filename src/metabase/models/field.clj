@@ -116,6 +116,11 @@
 ;; 2)  Failing that, we cache the corresponding permissions sets for each *Table ID* for a few seconds to minimize the
 ;;     number of DB calls that are made. See discussion below for more details.
 
+(defn- write-perms-objects-set
+  [db-id schema table-id]
+  ; TODO: figure out how to make this EE-only
+  (perms/feature-perms-path :data-model :all db-id schema table-id))
+
 (def ^:private ^{:arglists '([table-id])} perms-objects-set*
   "Cached lookup for the permissions set for a table with `table-id`. This is done so a single API call or other unit of
   computation doesn't accidentally end up in a situation where thousands of DB calls end up being made to calculate
@@ -129,19 +134,23 @@
   see), would require only a few megs of RAM, and again only if every single Table was looked up in a span of 5
   seconds."
   (memoize/ttl
-   (fn [table-id]
-     (let [{schema :schema, database-id :db_id} (db/select-one ['Table :schema :db_id] :id table-id)]
-       #{(perms/data-perms-path database-id schema table-id)}))
+   (fn [table-id read-or-write]
+     (let [{schema :schema, db-id :db_id} (db/select-one ['Table :schema :db_id] :id table-id)]
+       #{(case read-or-write
+           :read  (perms/data-perms-path db-id schema table-id)
+           :write (write-perms-objects-set db-id schema table-id))}))
    :ttl/threshold 5000))
 
 (defn- perms-objects-set
   "Calculate set of permissions required to access a Field. For the time being permissions to access a Field are the
    same as permissions to access its parent Table, and there are not separate permissions for reading/writing."
-  [{table-id :table_id, {db-id :db_id, schema :schema} :table} _]
+  [{table-id :table_id, {db-id :db_id, schema :schema} :table} read-or-write]
   {:arglists '([field read-or-write])}
   (if db-id
     ;; if Field already has a hydrated `:table`, then just use that to generate perms set (no DB calls required)
-    #{(perms/data-perms-path db-id schema table-id)}
+    #{(case read-or-write
+        :read  (perms/data-perms-path db-id schema table-id)
+        :write (write-perms-objects-set db-id schema table-id))}
     ;; otherwise we need to fetch additional info about Field's Table. This is cached for 5 seconds (see above)
     (perms-objects-set* table-id)))
 
@@ -182,7 +191,7 @@
   (merge i/IObjectPermissionsDefaults
          {:perms-objects-set perms-objects-set
           :can-read?         (partial i/current-user-has-partial-permissions? :read)
-          :can-write?        i/superuser?}))
+          :can-write?        (partial i/current-user-has-partial-permissions? :write)}))
 
 
 ;;; ---------------------------------------------- Hydration / Util Fns ----------------------------------------------
